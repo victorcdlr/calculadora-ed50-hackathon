@@ -1,0 +1,958 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calculadora ED50 + Registro de Procedencia en BaseCAMP</title>
+    <!-- Incluye Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Incluye ethers.js (para interacción blockchain) -->
+    <script src="https://cdn.ethers.io/lib/ethers-5.7.umd.min.js" type="application/javascript"></script>
+
+    <style>
+        /* --- CSS INTEGRADO (Sin cambios respecto al anterior) --- */
+        body {
+            font-family: sans-serif;
+            line-height: 1.6;
+            margin: 20px;
+            background-color: #f4f4f4;
+        }
+        /* ... (Resto de estilos CSS como en la versión anterior) ... */
+         h1, h2 {
+            color: #333;
+            text-align: center;
+        }
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            max-width: 1200px;
+            margin: 20px auto;
+        }
+        .input-section, .data-section, .blockchain-section {
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            margin-bottom: 15px;
+        }
+        .chart-section {
+            grid-column: span 2;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input#btnRegistrar:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 15px;
+        }
+
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+            word-wrap: break-word; /* Para ajustar texto largo */
+        }
+
+        th {
+            background-color: #f2f2f2;
+        }
+
+        #resultadoED50 {
+            font-weight: bold;
+            color: #337ab7;
+        }
+
+        canvas {
+            max-width: 100%;
+            height: auto;
+        }
+
+        #estadoWallet, #estadoRegistro {
+            font-style: italic;
+            color: #555;
+            font-size: 0.9em;
+            display: block; /* Para que ocupe su línea */
+            margin-top: 5px;
+            word-wrap: break-word; /* Para que la dirección o hash no desborde */
+        }
+
+        small {
+            color: #666;
+            font-size: 0.85em;
+        }
+
+        .explanation {
+            font-size: 0.9em;
+            color: #444;
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #eef;
+            border-left: 3px solid #337ab7;
+            border-radius: 3px;
+        }
+         /* --- FIN CSS INTEGRADO --- */
+    </style>
+</head>
+<body>
+
+    <!-- Título y párrafo ajustados -->
+    <h1>Calculadora ED50 + Registro de Procedencia (Sedantes)</h1>
+    <p>Ingrese datos experimentales (ej. Pentobarbital, Etanol - Sedación) para estimar ED50 (interpolación) y registrar su procedencia en BaseCAMP.</p>
+
+    <div class="container">
+        <!-- Columna Izquierda -->
+        <div>
+            <div class="input-section">
+                <h2>Ingresar Datos</h2>
+                <!-- Dropdown para Fármaco añadido -->
+                <label for="farmacoSelect">Fármaco:</label>
+                <select id="farmacoSelect">
+                    <option value="Pentobarbital" selected>Pentobarbital</option>
+                    <option value="Etanol">Etanol</option>
+                    <!-- Puedes añadir más fármacos aquí si es necesario -->
+                </select>
+
+                <label for="dosis">Dosis (mg/kg o g/kg):</label> <!-- Ajustar unidad según fármaco si es necesario -->
+                <input type="number" id="dosis" placeholder="Ej: 10 (PB) o 3 (EtOH)">
+
+                <label for="respuesta">Respuesta (% Sedación):</label>
+                <input type="number" id="respuesta" placeholder="Ej: 50" min="0" max="100">
+
+                <label for="via">Vía de Administración:</label>
+                <input type="text" id="via" placeholder="Ej: IP, Oral, IV">
+
+                <button id="btnAgregar">Agregar Dato</button>
+                <button id="btnLimpiar">Limpiar Datos</button>
+
+                <h2>Acciones</h2>
+                <button id="btnCalcular">Calcular ED50 (Interpolación)</button>
+            </div>
+
+            <div class="blockchain-section">
+                 <h2>Registro de Procedencia (IP) en BaseCAMP</h2>
+                 <p class="explanation">
+                     Conecta tu wallet y registra un hash de tus datos experimentales (incluyendo el fármaco) en la red BaseCAMP (Testnet).
+                     Esto crea una **prueba inmutable y con fecha (timestamp)** de la existencia de tus datos,
+                     vinculada a tu dirección, asegurando la **procedencia y la IP temprana** de tu investigación.
+                 </p>
+                <button id="btnConectarWallet">Conectar Wallet</button>
+                <span id="estadoWallet">Wallet no conectada</span> <br><br>
+                <button id="btnRegistrar" disabled>Registrar Procedencia en BaseCAMP</button>
+                 <span id="estadoRegistro"></span>
+            </div>
+        </div>
+
+        <!-- Columna Derecha -->
+        <div class="data-section">
+            <h2>Datos Ingresados</h2>
+            <table id="tablaDatos">
+                <thead>
+                    <tr>
+                        <!-- Nueva columna Fármaco añadida -->
+                        <th>Fármaco</th>
+                        <th>Dosis (mg/kg o g/kg)</th>
+                        <th>Respuesta (%)</th>
+                        <th>Vía</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- Filas de datos se añadirán aquí -->
+                </tbody>
+            </table>
+            <p><b>ED50 Estimada (Interpolación Lineal):</b> <span id="resultadoED50">N/A</span></p>
+            <p><small>Nota: La ED50 se estima interpolando linealmente entre los dos puntos de datos más cercanos que rodean el 50% de respuesta. Requiere al menos un punto ≤ 50% y uno ≥ 50%. El cálculo actual no diferencia por fármaco.</small></p>
+        </div>
+
+        <!-- Sección Gráfico (Ocupa ambas columnas) -->
+        <div class="chart-section">
+            <h2>Gráfico Dosis-Respuesta</h2>
+            <canvas id="graficoDosisRespuesta"></canvas>
+        </div>
+    </div>
+
+    <script>
+        // --- INICIO JAVASCRIPT INTEGRADO ---
+
+        // --- Configuración Blockchain (¡ACTUALIZAR ESTOS VALORES DESPUÉS DE DESPLEGAR!) ---
+        const contractAddress = "0x01aa6e21eb0672d975351c75b6ad6df3e5a0305d715dcaf333cba0600adcb81c"; // ¡¡¡ REEMPLAZAR CON TU DIRECCIÓN REAL !!!
+        const contractABI = [ [
+            {
+                "inputs": [
+                    {
+                        "internalType": "bytes32",
+                        "name": "_dataHash",
+                        "type": "bytes32"
+                    }
+                ],
+                "name": "addRecord",
+                "outputs": [],
+                "stateMutability": "nonpayable",
+                "type": "function"
+            },
+            {
+                "anonymous": false,
+                "inputs": [
+                    {
+                        "indexed": true,
+                        "internalType": "uint256",
+                        "name": "recordId",
+                        "type": "uint256"
+                    },
+                    {
+                        "indexed": false,
+                        "internalType": "bytes32",
+                        "name": "dataHash",
+                        "type": "bytes32"
+                    },
+                    {
+                        "indexed": true,
+                        "internalType": "address",
+                        "name": "recorder",
+                        "type": "address"
+                    },
+                    {
+                        "indexed": false,
+                        "internalType": "uint256",
+                        "name": "timestamp",
+                        "type": "uint256"
+                    }
+                ],
+                "name": "RecordAdded",
+                "type": "event"
+            },
+            {
+                "inputs": [],
+                "name": "recordCount",
+                "outputs": [
+                    {
+                        "internalType": "uint256",
+                        "name": "",
+                        "type": "uint256"
+                    }
+                ],
+                "stateMutability": "view",
+                "type": "function"
+            },
+            {
+                "inputs": [
+                    {
+                        "internalType": "uint256",
+                        "name": "",
+                        "type": "uint256"
+                    }
+                ],
+                "name": "records",
+                "outputs": [
+                    {
+                        "internalType": "bytes32",
+                        "name": "dataHash",
+                        "type": "bytes32"
+                    },
+                    {
+                        "internalType": "address",
+                        "name": "recorder",
+                        "type": "address"
+                    },
+                    {
+                        "internalType": "uint256",
+                        "name": "timestamp",
+                        "type": "uint256"
+                    }
+                ],
+                "stateMutability": "view",
+                "type": "function"
+            }
+        ] ]; // ¡¡¡ REEMPLAZAR CON TU ABI REAL !!!
+        // --- Fin Configuración Blockchain ---
+
+        // Array para almacenar los datos: { farmaco: string, dosis: number, respuesta: number, via: string }
+        let datos = [];
+        let myChart = null; // Variable para mantener la instancia del gráfico
+        let signer = null;    // Para guardar el signer de ethers
+        let provider = null;  // Para guardar el provider de ethers
+
+        // --- Elementos del DOM ---
+        const farmacoSelect = document.getElementById('farmacoSelect'); // Nuevo elemento
+        const dosisInput = document.getElementById('dosis');
+        const respuestaInput = document.getElementById('respuesta');
+        const viaInput = document.getElementById('via');
+        const tablaBody = document.querySelector('#tablaDatos tbody');
+        const resultadoED50Span = document.getElementById('resultadoED50');
+        const graficoCanvas = document.getElementById('graficoDosisRespuesta').getContext('2d');
+        const btnConectarWallet = document.getElementById('btnConectarWallet');
+        const estadoWalletSpan = document.getElementById('estadoWallet');
+        const btnRegistrar = document.getElementById('btnRegistrar');
+        const estadoRegistroSpan = document.getElementById('estadoRegistro');
+
+        // --- Event Listeners ---
+        document.getElementById('btnAgregar').addEventListener('click', agregarDatos);
+        document.getElementById('btnLimpiar').addEventListener('click', limpiarDatos);
+        document.getElementById('btnCalcular').addEventListener('click', calcularED50);
+        btnConectarWallet.addEventListener('click', conectarWallet); // Listener para conectar
+        btnRegistrar.addEventListener('click', registrarEnBaseCAMP); // Listener para registrar
+
+
+        // --- Inicializar Gráfico ---
+        function inicializarGrafico() {
+            if (myChart) {
+                myChart.destroy(); // Destruir gráfico anterior si existe
+            }
+            myChart = new Chart(graficoCanvas, {
+                type: 'scatter',
+                data: {
+                    datasets: [{
+                        label: 'Datos Experimentales',
+                        data: [],
+                        backgroundColor: 'rgba(54, 162, 235, 0.6)',
+                        borderColor: 'rgba(54, 162, 235, 1)',
+                        borderWidth: 1,
+                        pointRadius: 5
+                    }]
+                },
+                options: {
+                    scales: {
+                        x: {
+                            type: 'linear',
+                            position: 'bottom',
+                            title: {
+                                display: true,
+                                text: 'Dosis (Unidad según Fármaco)' // Ajustar texto si es necesario
+                            }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            max: 100,
+                            title: {
+                                display: true,
+                                text: 'Respuesta (% Sedación)'
+                            }
+                        }
+                    },
+                    plugins: {
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    // Buscar el dato original para mostrar fármaco y vía
+                                    const originalData = datos.find(d => d.dosis === context.raw.x && d.respuesta === context.raw.y);
+                                    const farmacoLabel = originalData ? originalData.farmaco : '';
+                                    return `${farmacoLabel} - Dosis: ${context.raw.x}, Respuesta: ${context.raw.y}%`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // --- Funciones ---
+
+        function agregarDatos() {
+            const farmacoValor = farmacoSelect.value; // Leer el fármaco seleccionado
+            const dosisValor = parseFloat(dosisInput.value);
+            const respuestaValor = parseFloat(respuestaInput.value);
+            const viaValor = viaInput.value.trim();
+
+            if (isNaN(dosisValor) || isNaN(respuestaValor) || dosisValor < 0 || respuestaValor < 0 || respuestaValor > 100 || viaValor === "" || farmacoValor === "") {
+                alert('Por favor, ingrese valores válidos para Fármaco, Dosis (≥0), Respuesta (0-10[type="number"], input[type="text"], select { /* Añadido select */
+            width: calc(100% - 22px);
+            padding: 10px;
+            margin-bottom: 15px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+             box-sizing: border-box; /* Para que padding no aumente el ancho */
+        }
+         /* Ajuste específico para el select si es necesario */
+        select {
+             width: 100%; /* Asegurar ancho completo */
+             padding: 9px; /* Ajustar padding si se ve diferente */
+        }
+
+        button {
+            display: inline-block;
+            background-color: #5cb85c;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+            margin-bottom: 10px;
+            transition: background-color 0.3s ease;
+        }
+        button:hover { background-color: #4cae4c; }
+        #btnLimpiar { background-color: #f0ad4e; }
+        #btnLimpiar:hover { background-color: #ec971f; }
+        #btnCalcular { background-color: #337ab7; }
+        #btnCalcular:hover { background-color: #286090; }
+        #btnConectarWallet { background-color: #f0ad4e; }
+        #btnConectarWallet:hover { background-color: #ec971f; }
+        #btnRegistrar { background-color: #5bc0de; }
+        #btnRegistrar:hover:not(:disabled) { background-color: #31b0d5; }
+        #btnRegistrar:disabled { background-color: #ccc; cursor: not-allowed; opacity: 0.6; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 15px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        #resultadoED50 { font-weight: bold; color: #337ab7; }
+        canvas { max-width: 100%; height: auto; }
+        #estadoWallet, #estadoRegistro { font-style: italic; color: #555; font-size: 0.9em; display: block; margin-top: 5px; word-wrap: break-word; }
+        small { color: #666; font-size: 0.85em; }
+        .explanation { font-size: 0.9em; color: #444; margin-top: 10px; padding: 10px; background-color: #eef; border-left: 3px solid #337ab7; border-radius: 3px; }
+         /* --- FIN CSS INTEGRADO --- */
+    </style>
+</head>
+<body>
+
+    <!-- Título ahora incluye un span para el nombre del fármaco -->
+    <h1>Calculadora ED50 Estimada (<span id="farmacoTitulo">Pentobarbital</span> - Sedación)</h1>
+    <p>Ingrese datos experimentales para estimar ED50 (interpolación) y registrar su procedencia en BaseCAMP.</p>
+
+    <div class="container">
+        <!-- Columna Izquierda -->
+        <div>
+            <div class="input-section">
+                <h2>Ingresar Datos</h2>
+
+                <!-- Selector de Fármaco añadido -->
+                <label for="farmacoSelect">Fármaco:</label>
+                <select id="farmacoSelect">
+                    <option value="Pentobarbital" selected>Pentobarbital</option>
+                    <option value="Etanol">Etanol</option>
+                </select>
+
+                <label for="dosis">Dosis (mg/kg):</label>
+                <input type="number" id="dosis" placeholder="Ej: 10">
+
+                <label for="respuesta">Respuesta (% Sedación):</label>
+                <input type="number" id="respuesta" placeholder="Ej: 50" min="0" max="100">
+
+                <label for="via">Vía de Administración:</label>
+                <input type="text" id="via" placeholder="Ej: IP, Oral, IV">
+
+                <button id="btnAgregar">Agregar Dato</button>
+                <button id="btnLimpiar">Limpiar Datos</button>
+
+                <h2>Acciones</h2>
+                <button id="btnCalcular">Calcular ED50 (Interpolación)</button>
+            </div>
+
+            <div class="blockchain-section">
+                 <h2>Registro de Procedencia (IP) en BaseCAMP</h2>
+                 <p class="explanation">
+                     Conecta tu wallet y registra un hash de tus datos experimentales en la red BaseCAMP (Testnet).
+                     Esto crea una **prueba inmutable y con fecha (timestamp)** de la existencia de tus datos,
+                     vinculada a tu dirección, asegurando la **procedencia y la IP temprana** de tu investigación.
+                 </p>
+                <button id="btnConectarWallet">Conectar Wallet</button>
+                <span id="estadoWallet">Wallet no conectada</span> <br><br>
+                <button id="btnRegistrar" disabled>Registrar Procedencia en BaseCAMP</button>
+                 <span id="estadoRegistro"></span>
+            </div>
+        </div>
+
+        <!-- Columna Derecha -->
+        <div class="data-section">
+            <h2>Datos Ingresados</h2>
+            <table id="tablaDatos">
+                <thead>
+                    <tr>
+                        <!-- Columna Fármaco añadida -->
+                        <th>Fármaco</th>
+                        <th>Dosis (mg/kg)</th>
+                        <th>Respuesta (%)</th>
+                        <th>Vía</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- Filas de datos se añadirán aquí -->
+                </tbody>
+            </table>
+            <p><b>ED50 Estimada (Interpolación Lineal):</b> <span id="resultadoED50">N/A</span></p>
+            <p><small>Nota: La ED50 se estima interpolando linealmente entre los dos puntos de datos más cercanos que rodean el 50% de respuesta. Requiere al menos un punto ≤ 50% y uno ≥ 50%.</small></p>
+        </div>
+
+        <!-- Sección Gráfico (Ocupa ambas columnas) -->
+        <div class="chart-section">
+            <!-- Título del gráfico se establecerá dinámicamente -->
+            <h2>Gráfico Dosis-Respuesta</h2>
+            <canvas id="graficoDosisRespuesta"></canvas>
+        </div>
+    </div>
+
+    <script>
+        // --- INICIO SCRIPT JS INTEGRADO ---
+
+        // Array para almacenar los datos: { farmaco: string, dosis: number, respuesta: number, via: string }
+        let datos = [];
+        let myChart = null; // Variable para mantener la instancia del gráfico
+
+        // --- Blockchain Variables (Inicializadas a null) ---
+        let provider = null;
+        let signer = null;
+
+        // --- Configuración Blockchain (¡ACTUALIZAR ESTOS VALORES DESPUÉS DE DESPLEGAR!) ---
+        const contractAddress = "0xYourDeployedContractAddressOnBaseSepolia"; // ¡¡¡ REEMPLAZAR CON TU DIRECCIÓN REAL !!!
+        const contractABI = [ /* Pega el ABI completo de ProvenanceRegistry aquí */ ]; // ¡¡¡ REEMPLAZAR CON TU ABI REAL !!!
+        // Ejemplo ABI mínimo (usar el completo generado por el compilador):
+        // const contractABI = [
+        //    "event RecordAdded(uint256 indexed recordId, bytes32 dataHash, address indexed recorder, uint256 timestamp)",
+        //    "function addRecord(bytes32 _dataHash)"
+        // ];
+        // --- Fin Configuración Blockchain ---
+
+
+        // --- Elementos del DOM ---
+        const farmacoSelect = document.getElementById('farmacoSelect');
+        const farmacoTituloSpan = document.getElementById('farmacoTitulo');
+        const dosisInput = document.getElementById('dosis');
+        const respuestaInput = document.getElementById('respuesta');
+        const viaInput = document.getElementById('via');
+        const tablaBody = document.querySelector('#tablaDatos tbody');
+        const resultadoED50Span = document.getElementById('resultadoED50');
+        const graficoCanvas = document.getElementById('graficoDosisRespuesta').getContext('2d');
+        const estadoWalletSpan = document.getElementById('estadoWallet');
+        const estadoRegistroSpan = document.getElementById('estadoRegistro');
+        const btnRegistrar = document.getElementById('btnRegistrar');
+
+
+        // --- Event Listeners ---
+        farmacoSelect.addEventListener('change', actualizarTitulosYGrafico); // Actualizar UI al cambiar fármaco
+        document.getElementById('btnAgregar').addEventListener('click', agregarDatos);
+        document.getElementById('btnLimpiar').addEventListener('click', limpiarDatos);
+        document.getElementById('btnCalcular').addEventListener('click', calcularED50);
+        document.getElementById('btnConectarWallet').addEventListener('click', conectarWallet);
+        btnRegistrar.addEventListener('click', registrarEnBaseCAMP);
+
+
+        // --- Inicializar Gráfico ---
+        function inicializarGrafico() {
+            if (myChart) {
+                myChart.destroy();
+            }
+            const farmacoSeleccionado = farmacoSelect.value; // Obtener fármaco actual
+            myChart = new Chart(graficoCanvas, {
+                type: 'scatter',
+                data: {
+                    datasets: [{
+                        label: `Datos Experimentales (${farmacoSeleccionado})`,
+                        data: [],
+                        backgroundColor: 'rgba(54, 162, 235, 0.6)',
+                        borderColor: 'rgba(54, 162, 235, 1)',
+                        borderWidth: 1,
+                        pointRadius: 5
+                    }]
+                },
+                options0) y Vía.');
+                return;
+            }
+
+            // Añadir el fármaco al objeto de datos
+            datos.push({ farmaco: farmacoValor, dosis: dosisValor, respuesta: respuestaValor, via: viaValor });
+            actualizarTabla();
+            dibujarGrafico();
+
+            dosisInput.value = '';
+            respuestaInput.value = '';
+            viaInput.value = '';
+            // No reseteamos el fármaco, mantenemos la selección
+        }
+
+        function actualizarTabla() {
+            tablaBody.innerHTML = '';
+            datos.forEach(dato => {
+                const fila = document.createElement('tr');
+                // Añadir celda para el fármaco
+                fila.innerHTML = `
+                    <td>${dato.farmaco}</td>
+                    <td>${dato.dosis}</td>
+                    <td>${dato.respuesta}</td>
+                    <td>${dato.via}</td>
+                `;
+                tablaBody.appendChild(fila);
+            });
+        }
+
+        function dibujarGrafico() {
+            if (!myChart) {
+                inicializarGrafico();
+            }
+            const datosGrafico = datos.map(d => ({ x: d.dosis, y: d.respuesta }));
+            myChart.data.datasets[0].data = datosGrafico;
+            myChart.update();
+        }
+
+        function limpiarDatos() {
+            datos = [];
+            actualizarTabla();
+            if (myChart) {
+                myChart.data.datasets[0].data = [];
+                myChart.update();
+            }
+            resultadoED50Span.innerText = 'N/A';
+            dosisInput.value = '';
+            respuestaInput.value = '';
+            viaInput.value = '';
+            farmacoSelect.value = "Pentobarbital"; // Resetear fármaco a default
+            estadoRegistroSpan.innerText = ''; // Limpiar estado de registro
+             // No desconectamos la wallet, pero podríamos resetear el botón de registro si quisiéramos
+             if (!signer) { // Si no hay signer (wallet no conectada), deshabilitar
+                 btnRegistrar.disabled = true;
+             } else if (datos.length === 0) { // Si hay signer pero no datos, deshabilitar
+                 btnRegistrar.disabled = true;
+             } else { // Si hay signer y datos, habilitar (esto se maneja mejor en conectarWallet y agregarDatos)
+                 btnRegistrar.disabled = false;
+             }
+        }
+
+        function calcularED50() {
+            const respuestaObjetivo = 50;
+            if (datos.length < 2) {
+                resultadoED50Span.innerText = "Se necesitan al menos 2 puntos de datos.";
+                return;
+            }
+            const datosOrdenados = [...datos].sort((a, b) => a.dosis - b.dosis);
+            let puntoInferior = null;
+            let puntoSuperior = null;
+            for (let i = 0; i < datosOrdenados.length - 1; i++) {
+                const p1 = datosOrdenados[i];
+                const p2 = datosOrdenados[i+1];
+                if ((p1.respuesta <= respuestaObjetivo && p2.respuesta >= respuestaObjetivo) ||
+                    (p1.respuesta >= respuestaObjetivo && p2.respuesta <= respuestaObjetivo)) {
+                    if (p1.respuesta === respuestaObjetivo && p2.respuesta === respuestaObjetivo && p1.dosis === p2.dosis) continue;
+                    puntoInferior = p1.respuesta <= p2.respuesta ? p1 : p2;
+                    puntoSuperior = p1.respuesta <= p2.respuesta ? p2 : p1;
+                    if (p1.respuesta === respuestaObjetivo) {
+                        resultadoED50Span.innerText = `${p1.dosis.toFixed(3)} (Unidad según fármaco) (Valor exacto encontrado)`;
+                        return;
+                    }
+                    if (p2.respuesta === respuestaObjetivo) {
+                        resultadoED50Span.innerText = `${p2.dosis.toFixed(3)} (Unidad según fármaco) (Valor exacto encontrado)`;
+                        return;
+                    }
+                    break;
+                }
+            }
+            if (puntoInferior && puntoSuperior && puntoInferior.respuesta !== puntoSuperior.respuesta) {
+                const x1 = puntoInferior.dosis;
+                const y1 = puntoInferior.respuesta;
+                const x2 = puntoSuperior.dosis;
+                const y2 = puntoSuperior.respuesta;
+                const ed50Estimada = x1 + ((x2 - x1) * (respuestaObjetivo - y1)) / (y2 - y1);
+                resultadoED50Span.innerText = `${ed50Estimada.toFixed(3)} (Unidad según fármaco)`;
+            } else {
+                resultadoED50Span.innerText = "No se pudo estimar (se necesitan datos por encima y por debajo del 50% de respuesta).";
+            }
+        }
+
+        // --- Funciones Blockchain ---
+
+        async function conectarWallet() {
+            if (typeof window.ethereum !== 'undefined') {
+                try {
+                    estadoWalletSpan.innerText = "Conectando...";
+                    await window.ethereum.request({ method: 'eth_requestAccounts' });
+                    provider = new ethers.providers.Web3Provider(window.ethereum);
+                    signer = provider.getSigner();
+                    const address = await signer.getAddress();
+                    const network = await provider.getNetwork();
+
+                    // Verificar si está en Base Sepolia (Chain ID: 84532)
+                    if (network.chainId !== 84532) {
+                         estadoWalletSpan.innerText = `Por favor, cambia a la red Base Sepolia en MetaMask. Conectado a: ${network.name} (${network.chainId})`;
+                         btnRegistrar.disabled = true;
+                         signer = null; // Invalidar signer si no es la red correcta
+                         return; // Detener ejecución si no es la red correcta
+                     }
+
+
+                    estadoWalletSpan.innerText = `Wallet Conectada: ${address.substring(0, 6)}...${address.substring(address.length - 4)} (Base Sepolia)`;
+                    btnConectarWallet.innerText = "Wallet Conectada"; // Cambiar texto del botón
+                    btnConectarWallet.disabled = true; // Deshabilitar botón una vez conectado
+
+                    // Habilitar botón de registro SOLO si hay datos
+                    btnRegistrar.disabled = datos.length === 0;
+
+                } catch (error) {
+                    console.error("Error conectando wallet:", error);
+                    estadoWalletSpan.innerText = "Error al conectar wallet.";
+                    alert("Error al conectar la wallet. Asegúrate de tener MetaMask instalado, desbloqueado y seleccionado Base Sepolia.");
+                    btnRegistrar.disabled = true;
+                }
+            } else {
+                estadoWalletSpan.innerText = "MetaMask no detectado.";
+                alert('MetaMask (u otra wallet compatible) no detectada. Por favor, instálala.');
+                btnRegistrar.disabled = true;
+            }
+        }
+
+        async function registrarEnBaseCAMP() {
+            if (!signer) {
+                alert("Por favor, conecta tu wallet primero.");
+                return;
+            }
+            if (datos.length === 0) {
+                alert("No hay datos experimentales para registrar.");
+                return;
+            }
+
+             // Verificar de nuevo la red por si acaso el usuario la cambió
+             try {
+                 const network = await provider.getNetwork();
+                 if (network.chainId !== 84532) { // Base Sepolia Chain: {
+                    responsive: true,
+                    maintainAspectRatio: false, // Permitir que el gráfico se ajuste mejor
+                     plugins: {
+                        title: { // Habilitar título del gráfico
+                            display: true,
+                            text: `Gráfico Dosis-Respuesta (${farmacoSeleccionado})` // Título inicial
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return `Dosis: ${context.raw.x}, Respuesta: ${context.raw.y}%`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            type: 'linear',
+                            position: 'bottom',
+                            title: {
+                                display: true,
+                                text: 'Dosis (mg/kg)' // Nota: Unidad podría cambiar por fármaco
+                            }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            max: 100,
+                            title: {
+                                display: true,
+                                text: 'Respuesta (% Sedación)'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // --- Funciones UI y Datos ---
+
+        function actualizarTitulosYGrafico() {
+            const farmacoSeleccionado = farmacoSelect.value;
+            farmacoTituloSpan.innerText = farmacoSeleccionado; // Actualizar H1
+
+            if (myChart) {
+                 // Actualizar título del gráfico y etiqueta del dataset
+                 myChart.options.plugins.title.text = `Gráfico Dosis-Respuesta (${farmacoSeleccionado})`;
+                 myChart.data.datasets[0].label = `Datos Experimentales (${farmacoSeleccionado})`;
+                 myChart.update(); // Actualizar el gráfico para reflejar cambios
+            } else {
+                inicializarGrafico(); // Si no existe, inicializarlo con el título correcto
+            }
+        }
+
+
+        function agregarDatos() {
+            const farmacoValor = farmacoSelect.value; // Obtener fármaco seleccionado
+            const dosisValor = parseFloat(dosisInput.value);
+            const respuestaValor = parseFloat(respuestaInput.value);
+            const viaValor = viaInput.value.trim();
+
+            if (isNaN(dosisValor) || isNaN(respuestaValor) || dosisValor < 0 || respuestaValor < 0 || respuestaValor > 100 || viaValor === "") {
+                alert('Por favor, ingrese valores válidos para Dosis (≥0), Respuesta (0-100) y Vía.');
+                return;
+            }
+
+            datos.push({ farmaco: farmacoValor, dosis: dosisValor, respuesta: respuestaValor, via: viaValor });
+            actualizarTabla();
+            dibujarGrafico(); // Actualizar gráfico
+
+            dosisInput.value = '';
+            respuestaInput.value = '';
+            viaInput.value = '';
+        }
+
+        function actualizarTabla() {
+            tablaBody.innerHTML = '';
+            datos.forEach(dato => {
+                const fila = document.createElement('tr');
+                // Añadir celda para Fármaco
+                fila.innerHTML = `
+                    <td>${dato.farmaco}</td>
+                    <td>${dato.dosis}</td>
+                    <td>${dato.respuesta}</td>
+                    <td>${dato.via}</td>
+                `;
+                tablaBody.appendChild(fila);
+            });
+             // Habilitar/deshabilitar botón de registro basado en si hay datos y wallet conectada
+             btnRegistrar.disabled = !(datos.length > 0 && signer);
+        }
+
+        function dibujarGrafico() {
+            if (!myChart) {
+                inicializarGrafico();
+            }
+            const datosGrafico = datos.map(d => ({ x: d.dosis, y: d.respuesta }));
+            myChart.data.datasets[0].data = datosGrafico;
+             // Asegurarse que el título del dataset es correcto
+             const farmacoSeleccionado = farmacoSelect.value;
+             myChart.data.datasets[0].label = `Datos Experimentales (${farmacoSeleccionado})`;
+            myChart.update();
+        }
+
+        function limpiarDatos() {
+            datos = [];
+            actualizarTabla(); // Actualizar tabla (y deshabilitar botón registro)
+            farmacoSelect.selectedIndex = 0; // Resetear fármaco
+            actualizarTitulosYGrafico(); // Resetear títulos y gráfico
+            resultadoED50Span.innerText = 'N/A';
+            dosisInput.value = '';
+            respuestaInput.value = '';
+            viaInput.value = '';
+             // Limpiar también los estados de blockchain
+             estadoRegistroSpan.innerText = '';
+             // El estado de la wallet no se limpia, se mantiene conectado si lo estaba
+        }
+
+        function calcularED50() {
+            const respuestaObjetivo = 50;
+            const farmacoActual = farmacoSelect.value; // Para el mensaje de resultado
+
+            if (datos.length < 2) {
+                resultadoED50Span.innerText = "Se necesitan al menos 2 puntos de datos.";
+                return;
+            }
+
+            const datosOrdenados = [...datos].sort((a, b) => a.dosis - b.dosis);
+            let puntoInferior = null;
+            let puntoSuperior = null;
+
+             for (let i = 0; i < datosOrdenados.length - 1; i++) {
+                 const p1 = datosOrdenados[i];
+                 const p2 = datosOrdenados[i+1];
+                 if ((p1.respuesta <= respuestaObjetivo && p2.respuesta >= respuestaObjetivo) ||
+                     (p1.respuesta >= respuestaObjetivo && p2.respuesta <= respuestaObjetivo)) {
+                     if (p1.respuesta === respuestaObjetivo && p2.respuesta === respuestaObjetivo && p1.dosis === p2.dosis) continue;
+                     puntoInferior = p1.respuesta <= p2.respuesta ? p1 : p2;
+                     puntoSuperior = p1.respuesta <= p2.respuesta ? p2 : p1;
+                     if (p1.respuesta === respuestaObjetivo) {
+                         resultadoED50Span.innerText = `${p1.dosis.toFixed(3)} mg/kg (para ${farmacoActual} - Valor exacto encontrado)`;
+                         return;
+                     }
+                     if (p2.respuesta === respuestaObjetivo) {
+                          resultadoED50Span.innerText = `${p2.dosis.toFixed(3)} mg/kg (para ${farmacoActual} - Valor exacto encontrado)`;
+                          return;
+                     }
+                     break;
+                 }
+             }
+
+            if (puntoInferior && puntoSuperior && puntoInferior.respuesta !== puntoSuperior.respuesta) {
+                const x1 = puntoInferior.dosis; const y1 = puntoInferior.respuesta;
+                const x2 = puntoSuperior.dosis; const y2 = puntoSuperior.respuesta;
+                const ed50Estimada = x1 + ((x2 - x1) * (respuestaObjetivo - y1)) / (y2 - y1);
+                resultadoED50Span.innerText = `${ed50Estimada.toFixed(3)} mg/kg (para ${farmacoActual})`;
+            } else {
+                 resultadoED50Span.innerText = "No se pudo estimar (se necesitan datos por encima y por debajo del 50% de respuesta).";
+            }
+        }
+
+        // --- Funciones Blockchain ---
+
+        async function conectarWallet() {
+            if (typeof window.ethereum !== 'undefined') {
+                try {
+                    await window.ethereum.request({ method: 'eth_requestAccounts' });
+                    provider = new ethers.providers.Web3Provider(window.ethereum);
+                    signer = provider.getSigner();
+                    const address = ID
+                     alert("Por favor, asegúrate de estar conectado a la red Base Sepolia en MetaMask antes de registrar.");
+                     estadoWalletSpan.innerText = `Por favor, cambia a la red Base Sepolia en MetaMask. Conectado a: ${network.name} (${network.chainId})`;
+                     btnRegistrar.disabled = true; // Deshabilitar si la red es incorrecta
+                     return;
+                 }
+             } catch (error) {
+                 console.error("Error verificando la red:", error);
+                 alert("No se pudo verificar la red. Asegúrate de que MetaMask esté funcionando correctamente.");
+                 return;
+             }
+
+
+            estadoRegistroSpan.innerText = "Preparando datos...";
+
+            try {
+                // 1. Crear representación JSON de los datos
+                const dataString = JSON.stringify(datos);
+
+                // 2. Hashear los datos
+                const dataHash = ethers.utils.id(dataString); // Keccak256
+                console.log(`Datos a registrar: ${dataString}`);
+                console.log(`Hash a registrar: ${dataHash}`);
+
+                 // Verificar si contractAddress y contractABI tienen valores válidos
+                 if (!contractAddress || contractAddress === "0xYourDeployedContractAddressOnBaseSepolia" || contractABI.length === 0) {
+                     alert("Error: La dirección del contrato o el ABI no están configurados correctamente en el código fuente.");
+                     estadoRegistroSpan.innerText = "Error de configuración.";
+                     return;
+                 }
+
+
+                // 3. Crear instancia del contrato
+                const registryContract = new ethers.Contract(contractAddress, contractABI, signer);
+
+                // 4. Llamar a la función del contrato
+                estadoRegistroSpan.innerText = `Enviando transacción a BaseCAMP...`;
+                const tx = await registryContract.addRecord(dataHash);
+                estadoRegistroSpan.innerText = `Transacción enviada: ${tx.hash}. Esperando confirmación...`;
+
+                // 5. Esperar confirmación
+                await tx.wait();
+                estadoRegistroSpan.innerHTML = `¡Registro Exitoso en BaseCAMP!<br>TX Hash: <a href="https://sepolia.basescan.org/tx/${tx.hash}" target="_blank">${tx.hash}</a>`;
+                console.log("Registro exitoso, TX:", tx);
+
+            } catch (error) {
+                console.error("Error al registrar en BaseCAMP:", error);
+                // Intentar dar un mensaje de error más útil
+                 let errorMessage = "Error al registrar los datos en BaseCAMP.";
+                 if (error.code === 'ACTION_REJECTED') {
+                     errorMessage = "Transacción rechazada por el usuario.";
+                 } else if (error.message) {
+                     // Intentar extraer un mensaje más claro si es posible
+                     if (error.message.includes("user rejected transaction")) {
+                          errorMessage = "Transacción rechazada por el usuario.";
+                     } else if (error.message.includes("insufficient funds")) {
+                          errorMessage = "Fondos insuficientes para la transacción (necesitas ETH de Base Sepolia).";
+                     }
+                     // Podrías añadir más parsing de errores comunes aquí
+                 }
+                estadoRegistroSpan.innerText = errorMessage;
+                alert(errorMessage); // Mostrar alerta también
+            }
+        }
+
+
+        // --- Inicializar al cargar la página ---
+        inicializarGrafico(); // Crear el gráfico vacío al inicio
+
+        // --- FIN JAVASCRIPT INTEGRADO ---
+    </script>
+</body>
+</html>
